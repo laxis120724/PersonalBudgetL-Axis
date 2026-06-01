@@ -1,4 +1,4 @@
-const CACHE_NAME = 'budgetwise-pwa-v4-date-fix';
+const CACHE_NAME = 'budgetwise-pwa-v5-load-date-fix';
 const FILES_TO_CACHE = [
   './',
   './index.html',
