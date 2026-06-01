@@ -23,6 +23,8 @@ This is a working **HTML + CSS + JavaScript PWA** for a personal budgeting syste
 
 ### 3. Transactions
 - Add transaction
+- Edit / update transaction
+- Delete transaction
 - Search transaction
 - Transaction table
 - Pagination
@@ -32,6 +34,7 @@ This is a working **HTML + CSS + JavaScript PWA** for a personal budgeting syste
 - Add Google Apps Script Web App URL
 - Add security token
 - Sync data to Google Sheets
+- Auto-sync after adding, editing, updating, or deleting transactions/categories
 - Load data from Google Sheets
 - Export backup as JSON
 - Import backup
@@ -84,8 +87,10 @@ const SECURITY_TOKEN = 'myBudget123';
 12. Go to **Settings**.
 13. Paste the Web App URL.
 14. Enter the same security token.
-15. Click **Save Settings**.
-16. Click **Sync to Google Sheets**.
+15. Keep **Automatically sync to Google Sheets after adding, editing, updating, or deleting data** checked.
+16. Click **Save Settings**.
+17. Click **Sync to Google Sheets** once to test the connection.
+18. After that, new category and transaction changes will auto-sync.
 
 The Apps Script will automatically create two sheets:
 
@@ -95,7 +100,8 @@ The Apps Script will automatically create two sheets:
 ## Important notes
 
 - The website is fully usable without Google Sheets.
-- Google Sheets sync needs internet connection.
+- Google Sheets sync needs internet connection. If you are offline, changes still save locally and sync can be done when you are back online.
+- Auto-sync only works after you save a valid Apps Script Web App URL and matching security token in Settings.
 - The PWA install button appears only after the app is hosted or opened through a proper local server.
 - For testing, use VS Code Live Server.
 - For real use, you can upload the files to GitHub Pages, Netlify, or any static hosting provider.
@@ -109,3 +115,10 @@ The Apps Script will automatically create two sheets:
 - `service-worker.js` - offline support
 - `Code.gs` - Google Sheets backend
 - `icons/` - PWA icons
+
+
+## Mobile navigation fix
+
+This version changes the mobile bottom navigation to full width and flat on the bottom of the screen. It also adds a `touchend` handler plus the normal `click` handler, so page buttons work more reliably on phones.
+
+After replacing files, refresh the browser with Ctrl + F5. If the installed PWA still shows the old floating menu, uninstall the old PWA from the phone and install it again so the updated service worker cache is used.

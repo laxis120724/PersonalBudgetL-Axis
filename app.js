@@ -16,7 +16,8 @@ const defaultSettings = {
   token: "",
   lastSync: "",
   theme: "light",
-  syncStatus: "Local only"
+  syncStatus: "Local only",
+  autoSync: true
 };
 
 let state = loadData();
@@ -25,6 +26,7 @@ let currentPage = "dashboard";
 let dashboardPeriod = "monthly";
 let transactionPage = 1;
 let deferredInstallPrompt = null;
+let autoSyncTimer = null;
 
 const pageTitles = {
   dashboard: "Dashboard",
@@ -57,9 +59,14 @@ function loadData() {
   }
 }
 
-function saveData() {
+function saveData(options = {}) {
+  const { autoSync = true } = options;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   renderAll();
+
+  if (autoSync) {
+    scheduleAutoSync();
+  }
 }
 
 function loadSettings() {
@@ -285,10 +292,10 @@ function deleteCategory(id) {
     showToast("This category is already used in transactions. Delete or change those transactions first.");
     return;
   }
-  if (!confirm("Delete this category?")) return;
+  if (!confirm("Delete this category? This will auto-sync if Google Sheets is connected.")) return;
   state.categories = state.categories.filter(category => category.id !== id);
   saveData();
-  showToast("Category deleted.");
+  showToast(settings.autoSync && settings.scriptUrl ? "Category deleted. Auto-syncing..." : "Category deleted.");
 }
 
 function handleCategorySubmit(event) {
@@ -313,11 +320,11 @@ function handleCategorySubmit(event) {
 
   resetCategoryForm();
   saveData();
-  
 }
 
 function handleTransactionSubmit(event) {
   event.preventDefault();
+  const id = document.getElementById("transaction-id").value;
   const date = document.getElementById("transaction-date").value;
   const description = document.getElementById("transaction-description").value.trim();
   const categoryId = document.getElementById("transaction-category").value;
@@ -327,22 +334,25 @@ function handleTransactionSubmit(event) {
     return showToast("Please complete the transaction form.");
   }
 
-  state.transactions.unshift({
-    id: crypto.randomUUID(),
-    date,
-    description,
-    categoryId,
-    amount
-  });
+  if (id) {
+    state.transactions = state.transactions.map(transaction =>
+      transaction.id === id ? { ...transaction, date, description, categoryId, amount } : transaction
+    );
+    showToast(settings.autoSync && settings.scriptUrl ? "Transaction updated. Auto-syncing..." : "Transaction updated.");
+  } else {
+    state.transactions.unshift({
+      id: crypto.randomUUID(),
+      date,
+      description,
+      categoryId,
+      amount
+    });
+    showToast(settings.autoSync && settings.scriptUrl ? "Transaction saved. Auto-syncing..." : "Transaction saved.");
+  }
 
-  document.getElementById("transaction-form").reset();
-  document.getElementById("transaction-date").value = toISODate(new Date());
+  resetTransactionForm();
   transactionPage = 1;
   saveData();
-  showToast("Transaction saved.");
-  if (settings.scriptUrl && settings.token) {
-    syncToSheets();
-  }
 }
 
 function getFilteredTransactions() {
@@ -379,7 +389,12 @@ function renderTransactions() {
           <td>${escapeHTML(category.name)}</td>
           <td><span class="type-pill ${category.type === "Add" ? "type-add" : "type-deduct"}">${category.type}</span></td>
           <td class="${signed >= 0 ? "amount-add" : "amount-deduct"}">${money(signed)}</td>
-          <td><button class="icon-btn danger" type="button" onclick="deleteTransaction('${transaction.id}')">🗑</button></td>
+          <td>
+            <div class="table-actions">
+              <button class="icon-btn" type="button" title="Edit" onclick="editTransaction('${transaction.id}')">✎</button>
+              <button class="icon-btn danger" type="button" title="Delete" onclick="deleteTransaction('${transaction.id}')">🗑</button>
+            </div>
+          </td>
         </tr>
       `;
     }).join("");
@@ -411,11 +426,36 @@ function changeTransactionPage(page) {
   renderTransactions();
 }
 
+function editTransaction(id) {
+  const transaction = state.transactions.find(item => item.id === id);
+  if (!transaction) return;
+
+  document.getElementById("transaction-id").value = transaction.id;
+  document.getElementById("transaction-date").value = transaction.date;
+  document.getElementById("transaction-description").value = transaction.description;
+  document.getElementById("transaction-category").value = transaction.categoryId;
+  document.getElementById("transaction-amount").value = transaction.amount;
+  document.getElementById("transaction-form-title").textContent = "Edit Transaction";
+  document.getElementById("save-transaction-btn").textContent = "Update Transaction";
+  document.getElementById("cancel-transaction-edit").hidden = false;
+  showPage("transactions");
+  document.getElementById("transaction-description").focus();
+}
+
+function resetTransactionForm() {
+  document.getElementById("transaction-form").reset();
+  document.getElementById("transaction-id").value = "";
+  document.getElementById("transaction-date").value = toISODate(new Date());
+  document.getElementById("transaction-form-title").textContent = "Add Transaction";
+  document.getElementById("save-transaction-btn").textContent = "Save Transaction";
+  document.getElementById("cancel-transaction-edit").hidden = true;
+}
+
 function deleteTransaction(id) {
-  if (!confirm("Delete this transaction?")) return;
+  if (!confirm("Delete this transaction? This will auto-sync if Google Sheets is connected.")) return;
   state.transactions = state.transactions.filter(transaction => transaction.id !== id);
   saveData();
-  showToast("Transaction deleted.");
+  showToast(settings.autoSync && settings.scriptUrl ? "Transaction deleted. Auto-syncing..." : "Transaction deleted.");
 }
 
 function formatDate(dateString) {
@@ -425,6 +465,8 @@ function formatDate(dateString) {
 function renderSettings() {
   document.getElementById("script-url").value = settings.scriptUrl || "";
   document.getElementById("script-token").value = settings.token || "";
+  const autoSyncToggle = document.getElementById("auto-sync-toggle");
+  if (autoSyncToggle) autoSyncToggle.checked = settings.autoSync !== false;
   document.getElementById("sync-status-badge").textContent = settings.syncStatus || "Local only";
   document.getElementById("last-sync-text").textContent = settings.lastSync ? `Last sync: ${settings.lastSync}` : "Last sync: Not yet synced";
 }
@@ -441,16 +483,39 @@ function applySettingsToUI() {
   subtitle.textContent = settings.lastSync || "Data saved on this device";
 }
 
-function handleSaveSettings() {
+function handleSaveSettings(options = {}) {
+  const { silent = false } = options;
   settings.scriptUrl = document.getElementById("script-url").value.trim();
   settings.token = document.getElementById("script-token").value.trim();
+  const autoSyncToggle = document.getElementById("auto-sync-toggle");
+  if (autoSyncToggle) settings.autoSync = autoSyncToggle.checked;
   saveSettings();
-  showToast("Settings saved.");
+  if (!silent) showToast("Settings saved.");
 }
 
-async function syncToSheets() {
-  handleSaveSettings();
-  if (!settings.scriptUrl) return showToast("Paste your Google Apps Script Web App URL first.");
+function scheduleAutoSync() {
+  if (settings.autoSync === false || !settings.scriptUrl) return;
+
+  window.clearTimeout(autoSyncTimer);
+
+  if (!navigator.onLine) {
+    settings.syncStatus = "Offline - pending sync";
+    saveSettings();
+    return;
+  }
+
+  settings.syncStatus = "Auto-sync pending";
+  saveSettings();
+  autoSyncTimer = window.setTimeout(() => syncToSheets({ auto: true, readSettingsFromForm: false }), 900);
+}
+
+async function syncToSheets(options = {}) {
+  const { auto = false, readSettingsFromForm = true } = options;
+  if (readSettingsFromForm) handleSaveSettings({ silent: true });
+  if (!settings.scriptUrl) {
+    if (!auto) showToast("Paste your Google Apps Script Web App URL first.");
+    return;
+  }
 
   const payload = {
     action: "syncAll",
@@ -467,18 +532,19 @@ async function syncToSheets() {
     });
 
     settings.lastSync = new Date().toLocaleString("en-AE");
-    settings.syncStatus = "Sent to Google Sheets";
+    settings.syncStatus = auto ? "Auto-synced to Google Sheets" : "Sent to Google Sheets";
     saveSettings();
-    showToast("Data was sent to Google Sheets. Check your spreadsheet to confirm.");
+    showToast(auto ? "Auto-synced to Google Sheets." : "Data was sent to Google Sheets. Check your spreadsheet to confirm.");
   } catch (error) {
-    settings.syncStatus = "Sync failed";
+    settings.syncStatus = auto ? "Auto-sync failed" : "Sync failed";
     saveSettings();
-    showToast("Sync failed. Check the Apps Script URL.");
+    showToast(auto ? "Auto-sync failed. Check your Apps Script setup." : "Sync failed. Check the Apps Script URL.");
   }
 }
 
 function loadFromSheets() {
-  handleSaveSettings();
+  if (!confirm("Load data from Google Sheets? This will replace the data currently saved in this browser.")) return;
+  handleSaveSettings({ silent: true });
   if (!settings.scriptUrl) return showToast("Paste your Google Apps Script Web App URL first.");
 
   const callbackName = `budgetwiseCallback_${Date.now()}`;
@@ -585,8 +651,27 @@ function renderAll() {
 }
 
 function bindEvents() {
+  let lastTouchNavigation = 0;
+
+  function handleNavigation(event) {
+    if (event.type === "touchend") {
+      event.preventDefault();
+      lastTouchNavigation = Date.now();
+    }
+
+    if (event.type === "click" && Date.now() - lastTouchNavigation < 450) {
+      return;
+    }
+
+    const page = event.currentTarget.dataset.page;
+    if (page) {
+      showPage(page);
+    }
+  }
+
   document.querySelectorAll(".nav-link, .mobile-nav-link").forEach(button => {
-    button.addEventListener("click", () => showPage(button.dataset.page));
+    button.addEventListener("touchend", handleNavigation, { passive: false });
+    button.addEventListener("click", handleNavigation);
   });
 
   document.querySelectorAll(".period-btn").forEach(button => {
@@ -601,18 +686,26 @@ function bindEvents() {
   document.getElementById("category-form").addEventListener("submit", handleCategorySubmit);
   document.getElementById("cancel-category-edit").addEventListener("click", resetCategoryForm);
   document.getElementById("transaction-form").addEventListener("submit", handleTransactionSubmit);
+  document.getElementById("cancel-transaction-edit").addEventListener("click", resetTransactionForm);
   document.getElementById("transaction-search").addEventListener("input", () => {
     transactionPage = 1;
     renderTransactions();
   });
 
-  document.getElementById("save-settings-btn").addEventListener("click", handleSaveSettings);
-  document.getElementById("sync-to-sheets-btn").addEventListener("click", syncToSheets);
+  document.getElementById("save-settings-btn").addEventListener("click", () => handleSaveSettings());
+  document.getElementById("sync-to-sheets-btn").addEventListener("click", () => syncToSheets());
   document.getElementById("load-from-sheets-btn").addEventListener("click", loadFromSheets);
   document.getElementById("export-json-btn").addEventListener("click", exportJSON);
   document.getElementById("import-json-input").addEventListener("change", importJSON);
   document.getElementById("clear-data-btn").addEventListener("click", clearData);
   document.getElementById("toggle-theme-btn").addEventListener("click", toggleTheme);
+
+  window.addEventListener("online", () => {
+    if (settings.autoSync !== false && settings.scriptUrl) {
+      showToast("Back online. Auto-syncing latest data...");
+      scheduleAutoSync();
+    }
+  });
 
   window.addEventListener("beforeinstallprompt", event => {
     event.preventDefault();
