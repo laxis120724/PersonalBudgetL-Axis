@@ -1,0 +1,155 @@
+/**
+ * BudgetWise PWA - Google Sheets backend
+ *
+ * SETUP:
+ * 1. Open your Google Sheet.
+ * 2. Go to Extensions > Apps Script.
+ * 3. Paste this whole file into Code.gs.
+ * 4. Change SECURITY_TOKEN below.
+ * 5. Deploy > New deployment > Web app.
+ * 6. Execute as: Me
+ * 7. Who has access: Anyone with the link
+ * 8. Copy the Web App URL ending in /exec and paste it in the PWA Settings page.
+ */
+
+const SECURITY_TOKEN = 'change-this-password';
+const CATEGORIES_SHEET = 'Categories';
+const TRANSACTIONS_SHEET = 'Transactions';
+
+function doGet(e) {
+  const params = e.parameter || {};
+  const callback = params.callback || '';
+
+  try {
+    checkToken_(params.token || '');
+    const action = params.action || 'getAll';
+
+    if (action !== 'getAll') {
+      throw new Error('Unknown action.');
+    }
+
+    return output_({ ok: true, data: getAllData_() }, callback);
+  } catch (error) {
+    return output_({ ok: false, error: error.message }, callback);
+  }
+}
+
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData.contents || '{}');
+    checkToken_(body.token || '');
+
+    if (body.action === 'syncAll') {
+      saveAllData_(body.data || {});
+      return output_({ ok: true, message: 'Data synced.' });
+    }
+
+    throw new Error('Unknown action.');
+  } catch (error) {
+    return output_({ ok: false, error: error.message });
+  }
+}
+
+function checkToken_(token) {
+  if (SECURITY_TOKEN && token !== SECURITY_TOKEN) {
+    throw new Error('Invalid security token.');
+  }
+}
+
+function getSpreadsheet_() {
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function getOrCreateSheet_(name, headers) {
+  const ss = getSpreadsheet_();
+  let sheet = ss.getSheetByName(name);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+  }
+
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+  }
+
+  return sheet;
+}
+
+function saveAllData_(data) {
+  const categories = Array.isArray(data.categories) ? data.categories : [];
+  const transactions = Array.isArray(data.transactions) ? data.transactions : [];
+
+  const categorySheet = getOrCreateSheet_(CATEGORIES_SHEET, ['id', 'name', 'type', 'budget']);
+  categorySheet.clearContents();
+  categorySheet.getRange(1, 1, 1, 4).setValues([['id', 'name', 'type', 'budget']]);
+  if (categories.length > 0) {
+    categorySheet.getRange(2, 1, categories.length, 4).setValues(categories.map(category => [
+      category.id || '',
+      category.name || '',
+      category.type || 'Deduct',
+      Number(category.budget || 0)
+    ]));
+  }
+  categorySheet.autoResizeColumns(1, 4);
+
+  const transactionSheet = getOrCreateSheet_(TRANSACTIONS_SHEET, ['id', 'date', 'description', 'categoryId', 'amount']);
+  transactionSheet.clearContents();
+  transactionSheet.getRange(1, 1, 1, 5).setValues([['id', 'date', 'description', 'categoryId', 'amount']]);
+  if (transactions.length > 0) {
+    transactionSheet.getRange(2, 1, transactions.length, 5).setValues(transactions.map(transaction => [
+      transaction.id || '',
+      transaction.date || '',
+      transaction.description || '',
+      transaction.categoryId || '',
+      Number(transaction.amount || 0)
+    ]));
+  }
+  transactionSheet.autoResizeColumns(1, 5);
+}
+
+function getAllData_() {
+  const categorySheet = getOrCreateSheet_(CATEGORIES_SHEET, ['id', 'name', 'type', 'budget']);
+  const transactionSheet = getOrCreateSheet_(TRANSACTIONS_SHEET, ['id', 'date', 'description', 'categoryId', 'amount']);
+
+  const categories = readObjects_(categorySheet).map(row => ({
+    id: row.id,
+    name: row.name,
+    type: row.type || 'Deduct',
+    budget: Number(row.budget || 0)
+  })).filter(row => row.id && row.name);
+
+  const transactions = readObjects_(transactionSheet).map(row => ({
+    id: row.id,
+    date: row.date,
+    description: row.description,
+    categoryId: row.categoryId,
+    amount: Number(row.amount || 0)
+  })).filter(row => row.id && row.date && row.categoryId);
+
+  return { categories, transactions };
+}
+
+function readObjects_(sheet) {
+  const values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+
+  const headers = values[0].map(header => String(header).trim());
+  return values.slice(1).map(row => {
+    const item = {};
+    headers.forEach((header, index) => {
+      item[header] = row[index];
+    });
+    return item;
+  });
+}
+
+function output_(payload, callback) {
+  const text = callback
+    ? `${callback}(${JSON.stringify(payload)});`
+    : JSON.stringify(payload);
+
+  return ContentService
+    .createTextOutput(text)
+    .setMimeType(callback ? ContentService.MimeType.JAVASCRIPT : ContentService.MimeType.JSON);
+}
