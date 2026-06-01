@@ -24,7 +24,7 @@ let state = loadData();
 sanitizeData();
 let settings = loadSettings();
 let currentPage = "dashboard";
-let dashboardPeriod = "monthly";
+let dashboardPeriod = "daily";
 let transactionPage = 1;
 let deferredInstallPrompt = null;
 let autoSyncTimer = null;
