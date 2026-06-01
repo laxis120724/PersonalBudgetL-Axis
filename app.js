@@ -640,8 +640,9 @@ async function syncToSheets(options = {}) {
   }
 }
 
-function loadFromSheets() {
-  if (!confirm("Load data from Google Sheets? This will replace the data currently saved in this browser.")) return;
+function loadFromSheets(options = {}) {
+  const { confirmFirst = true, auto = false } = options;
+  if (confirmFirst && !confirm("Load data from Google Sheets? This will replace the data currently saved in this browser.")) return;
   handleSaveSettings({ silent: true });
   if (!settings.scriptUrl) return showToast("Paste your Google Apps Script Web App URL first.");
 
@@ -663,7 +664,7 @@ function loadFromSheets() {
         settings.syncStatus = "Google Sheets Synced";
         saveSettings();
         renderAll();
-        showToast("Loaded data from Google Sheets.");
+        showToast(auto ? "Latest data loaded from Google Sheets." : "Loaded data from Google Sheets.");
       } else {
         showToast("No valid data found in Google Sheets.");
       }
@@ -803,6 +804,15 @@ function bindEvents() {
     if (settings.autoSync !== false && settings.scriptUrl) {
       showToast("Back online. Auto-syncing latest data...");
       scheduleAutoSync();
+    }
+  });
+
+  window.addEventListener("focus", () => {
+    if (settings.scriptUrl && settings.token && navigator.onLine) {
+      loadFromSheets({
+        confirmFirst: false,
+        auto: true
+      });
     }
   });
 
